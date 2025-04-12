@@ -1,4 +1,7 @@
 /**
+ * This is a script for Frida.
+ * Usage example: Frida -n ChatGPT -l config.js -l native-connect-hook.js
+ * 
  * In some cases, proxy configuration by itself won't work. This notably includes Flutter apps (which ignore
  * system/JVM configuration entirely) and plausibly other apps intentionally ignoring proxies. To handle that
  * we hook native connect() calls directly, to redirect traffic on all ports to the target.
@@ -24,8 +27,16 @@ const PROXY_HOST_IPv6_BYTES = IPv6_MAPPING_PREFIX_BYTES.concat(PROXY_HOST_IPv4_B
 const connectFn = (
     Module.findExportByName('libc.so', 'connect') ?? // Android
     Module.findExportByName('libc.so.6', 'connect') ?? // Linux
+    // Module.findExportByName('libSystem.B.dylib', 'connect') // iOS, looks like it delegates work to libsystem_kernel
     Module.findExportByName('libsystem_kernel.dylib', 'connect') // iOS
 );
+
+const log = (...args) => {
+    let prefix = `${Process.id} ${Process.mainModule.name}`;
+    console.log(`[${prefix}]`, ...args);
+};
+
+
 
 if (!connectFn) { // Should always be set, but just in case
     console.warn('Could not find libc connect() function to hook raw traffic');
@@ -64,14 +75,14 @@ if (!connectFn) { // Should always be set, but just in case
                 if (!shouldBeIntercepted) {
                     // Not intercecpted, sent to unrecognized port - probably not HTTP(S)
                     if (DEBUG_MODE) {
-                        console.debug(`Allowing unintercepted connection to port ${port}`);
+                        log(`Allowing unintercepted connection to port ${port}`);
                     }
                     return;
                 }
 
                 // Otherwise, it's an unintercepted connection that should be captured:
 
-                console.log(`Manually intercepting connection to ${getReadableAddress(hostBytes, isIPv6)}:${port}`);
+                log(`Manually intercepting connection to ${getReadableAddress(hostBytes, isIPv6)}:${port}`);
 
                 // Overwrite the port with the proxy port:
                 portAddrBytes.setUint16(0, PROXY_PORT, false); // Big endian
@@ -86,7 +97,7 @@ if (!connectFn) { // Should always be set, but just in case
                     addrPtr.add(4).writeByteArray(PROXY_HOST_IPv4_BYTES);
                 }
             } else if (DEBUG_MODE) {
-                console.log(`Ignoring ${sockType} connection`);
+                log(`Ignoring ${sockType} connection`);
                 this.ignored = true;
             }
 
@@ -98,13 +109,13 @@ if (!connectFn) { // Should always be set, but just in case
             const fd = this.sockFd;
             const sockType = Socket.type(fd);
             const address = Socket.peerAddress(fd);
-            console.debug(
+            log(
                 `Connected ${sockType} fd ${fd} to ${JSON.stringify(address)} (${result.toInt32()})`
             );
         }
     });
 
-    console.log(`== Redirecting ${
+    log(`== Redirecting ${
         IGNORED_NON_HTTP_PORTS.length === 0
         ? 'all'
         : 'all unrecognized'
